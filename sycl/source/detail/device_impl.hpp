@@ -424,9 +424,14 @@ public:
   // Must be called through `platform_impl::getOrMakeDeviceImpl` only.
   // `private_tag` ensures that is true.
   explicit device_impl(ur_device_handle_t Device, platform_impl &Platform,
-                       private_tag);
+                       private_tag, size_t idx);
 
   ~device_impl();
+
+  /// Get the index of the device within the device vector of its platform.
+  ///
+  /// \return the index if the device
+  size_t getIndexWithinPlatform() const { return MIndexWithinPlatform; }
 
   /// Get instance of OpenCL device
   ///
@@ -1549,6 +1554,10 @@ public:
       return get_info_impl_nocheck<UR_DEVICE_INFO_IPC_MEMORY_SUPPORT_EXP>()
           .value_or(0);
     }
+    CASE(ext_oneapi_device_wait) {
+      return get_info_impl_nocheck<UR_DEVICE_INFO_DEVICE_WAIT_SUPPORT_EXP>()
+          .value_or(0);
+    }
     else {
       return false; // This device aspect has not been implemented yet.
     }
@@ -2211,6 +2220,22 @@ public:
     return {};
   }
 
+  /// Synchronizes with all queues on the device.
+  void wait();
+
+  // Dispatch all unconsumed asynchronous exception to the appropriate handlers.
+  void throwAsynchronous();
+
+  void registerQueue(const std::weak_ptr<queue_impl> &Q) {
+    std::lock_guard<std::mutex> Lock(MQueuesMutex);
+    MQueues.insert(Q);
+  }
+
+  void unregisterQueue(const std::weak_ptr<queue_impl> &Q) {
+    std::lock_guard<std::mutex> Lock(MQueuesMutex);
+    MQueues.erase(Q);
+  }
+
 private:
   ur_device_handle_t MDevice = 0;
   // This is used for getAdapter so should be above other properties.
@@ -2220,6 +2245,13 @@ private:
   std::pair<uint64_t, uint64_t> MDeviceHostBaseTime{0, 0};
 
   const ur_device_handle_t MRootDevice;
+
+  // Devices track a list of active queues on it, to allow for synchronization
+  // with host_task and not-yet-enqueued commands.
+  std::mutex MQueuesMutex;
+  std::set<std::weak_ptr<queue_impl>,
+           std::owner_less<std::weak_ptr<queue_impl>>>
+      MQueues;
 
   // Order of caches matters! UR must come before SYCL info descriptors (because
   // get_info calls get_info_impl but the opposite never happens) and both
@@ -2264,6 +2296,8 @@ private:
           aspect::ext_oneapi_bindless_images_2d_usm,
           aspect::ext_oneapi_is_composite, aspect::ext_oneapi_is_component>>
       MCache;
+
+  const size_t MIndexWithinPlatform = 0;
 
 }; // class device_impl
 

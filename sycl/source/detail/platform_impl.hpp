@@ -42,6 +42,8 @@ class platform_impl : public std::enable_shared_from_this<platform_impl> {
   explicit platform_impl(ur_platform_handle_t APlatform, adapter_impl &Adapter);
 
   ~platform_impl();
+  platform_impl(const platform_impl &) = delete;
+  platform_impl &operator=(const platform_impl &) = delete;
 
 public:
   /// Checks if this platform supports extension.
@@ -157,8 +159,6 @@ public:
   /// a new entry to the cache
   ///
   /// \param UrDevice is the UrDevice whose impl is requested
-  ///
-  /// \param PlatormImpl is the Platform for that Device
   ///
   /// \return a device_impl* corresponding to the device
   device_impl &getOrMakeDeviceImpl(ur_device_handle_t UrDevice);

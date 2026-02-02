@@ -254,49 +254,6 @@ std::vector<ur_event_handle_t> Command::getUrEvents(events_range Events) const {
   return getUrEvents(Events, MWorkerQueue.get(), isHostTask());
 }
 
-// This function is implemented (duplicating getUrEvents a lot) as short term
-// solution for the issue that barrier with wait list could not
-// handle empty ur event handles when kernel is enqueued on host task
-// completion.
-std::vector<ur_event_handle_t>
-Command::getUrEventsBlocking(events_range Events, bool HasEventMode) const {
-  std::vector<ur_event_handle_t> RetUrEvents;
-  for (event_impl &Event : Events) {
-    // Throwaway events created with empty constructor will not have a context
-    // (which is set lazily) calling getContextImpl() would set that
-    // context, which we wish to avoid as it is expensive.
-    // Skip host task and NOP events also.
-    if (Event.isDefaultConstructed() || Event.isHost() || Event.isNOP())
-      continue;
-
-    // If command has not been enqueued then we have to enqueue it.
-    // It may happen if async enqueue in a host task is involved.
-    // Interoperability events are special cases and they are not enqueued, as
-    // they don't have an associated queue and command.
-    if (!Event.isInterop() && !Event.isEnqueued()) {
-      if (!Event.getCommand() || !Event.getCommand()->producesPiEvent())
-        continue;
-      std::vector<Command *> AuxCmds;
-      Scheduler::getInstance().enqueueCommandForCG(Event, AuxCmds, BLOCKING);
-    }
-    // Do not add redundant event dependencies for in-order queues.
-    // At this stage dependency is definitely ur task and need to check if
-    // current one is a host task. In this case we should not skip pi event due
-    // to different sync mechanisms for different task types on in-order queue.
-    // If the resulting event is supposed to have a specific event mode,
-    // redundant events may still differ from the resulting event, so they are
-    // kept.
-    if (!HasEventMode && MWorkerQueue &&
-        Event.getWorkerQueue() == MWorkerQueue && MWorkerQueue->isInOrder() &&
-        !isHostTask())
-      continue;
-
-    RetUrEvents.push_back(Event.getHandle());
-  }
-
-  return RetUrEvents;
-}
-
 bool Command::isHostTask() const {
   return (MType == CommandType::RUN_CG) /* host task has this type also */ &&
          ((static_cast<const ExecCGCommand *>(this))->getCG().getType() ==
@@ -1189,7 +1146,7 @@ ur_result_t AllocaSubBufCommand::enqueueImp() {
           MMemAllocation, MemoryManager::allocateMemSubBuffer,
           getContext(MQueue), MParentAlloca->getMemAllocation(),
           MRequirement.MElemSize, MRequirement.MOffsetInBytes,
-          MRequirement.MAccessRange, std::move(EventImpls), UREvent);
+          MRequirement.MMemoryRange, std::move(EventImpls), UREvent);
       Result != UR_RESULT_SUCCESS)
     return Result;
 
@@ -2701,6 +2658,19 @@ ur_result_t enqueueImpCommandBufferKernel(
   auto Args = CommandGroup.MArgs;
   sycl::detail::applyFuncOnFilteredArgs(EliminatedArgMask, Args, SetFunc);
 
+  const std::optional<int> &ImplicitLocalArg =
+      CommandGroup.MDeviceKernelInfo.getImplicitLocalArgPos();
+
+  // Set the implicit local memory buffer to support
+  // get_work_group_scratch_memory. This is for backend not supporting
+  // CUDA-style local memory setting. Note that we may have -1 as a position,
+  // this indicates the buffer is actually unused and was elided.
+  if (ImplicitLocalArg.has_value() && ImplicitLocalArg.value() != -1) {
+    Adapter.call<UrApiKind::urKernelSetArgLocal>(
+        UrKernel, ImplicitLocalArg.value(),
+        CommandGroup.MKernelWorkGroupMemorySize, nullptr);
+  }
+
   // Remember this information before the range dimensions are reversed
   const bool HasLocalSize = (CommandGroup.MNDRDesc.LocalSize[0] != 0);
 
@@ -2731,6 +2701,17 @@ ur_result_t enqueueImpCommandBufferKernel(
          (NDRDesc.Dims < 3 || RequiredWGSize[2] != 0));
     if (EnforcedLocalSize)
       LocalSize = RequiredWGSize;
+  }
+
+  // If there is no implicit arg, let the driver handle it via a property
+  // which is not yet supported!
+  if (CommandGroup.MKernelWorkGroupMemorySize &&
+      !ImplicitLocalArg.has_value()) {
+    throw sycl::exception(
+        sycl::make_error_code(errc::invalid),
+        "Setting work group scratch memory size is not yet supported "
+        "for use with the SYCL Graph extension and backends using "
+        "CUDA-style local memory settings.");
   }
 
   // Command-buffers which are not updatable cannot return command handles, so
@@ -3549,7 +3530,7 @@ ur_result_t ExecCGCommand::enqueueImpQueue() {
     bool HasEventMode =
         Barrier->MEventMode != ext::oneapi::experimental::event_mode_enum::none;
     std::vector<ur_event_handle_t> UrEvents =
-        getUrEventsBlocking(Events, HasEventMode);
+        getUrEventsBlocking(Events, HasEventMode, *MWorkerQueue, isHostTask());
     if (UrEvents.empty()) {
       // If Events is empty, then the barrier has no effect.
       return UR_RESULT_SUCCESS;

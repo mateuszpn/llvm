@@ -238,8 +238,10 @@ public:
   // `std::shared_ptr` allocations.
   template <typename... Ts>
   static std::shared_ptr<queue_impl> create(Ts &&...args) {
-    return std::make_shared<queue_impl>(std::forward<Ts>(args)...,
-                                        private_tag{});
+    auto ImplPtr =
+        std::make_shared<queue_impl>(std::forward<Ts>(args)..., private_tag{});
+    ImplPtr->getDeviceImpl().registerQueue(ImplPtr);
+    return ImplPtr;
   }
 
   ~queue_impl() {
@@ -292,9 +294,6 @@ public:
 
   /// \return an associated SYCL device.
   device get_device() const { return createSyclObjFromImpl<device>(MDevice); }
-
-  /// \return true if this queue allows for discarded events.
-  bool supportsDiscardingPiEvents() const { return MIsInorder; }
 
   bool isInOrder() const { return MIsInorder; }
 
@@ -374,6 +373,13 @@ public:
     submit_kernel_direct_impl(NDRDescT(RangeView), HostKernel, DeviceKernelInfo,
                               /*CallerNeedsEvent*/ false, DepEvents, Props,
                               CodeLoc, IsTopCodeLoc);
+  }
+
+  event submit_barrier_direct_with_event(sycl::span<const event> DepEvents,
+                                         const detail::code_location &CodeLoc) {
+    detail::EventImplPtr EventImpl =
+        submit_barrier_direct_impl(DepEvents, CodeLoc);
+    return createSyclObjFromImpl<event>(std::move(EventImpl));
   }
 
   void submit_graph_direct_without_event(
@@ -703,6 +709,12 @@ public:
     return MAsyncHandler;
   }
 
+  /// Waits for all not-yet-enqueued and host_task commands in the queue and
+  /// clears the events associated with the queue (if out-of-order.)
+  /// Note: This should only be called if the queue is guaranteed to be
+  /// synchronized by the caller.
+  void waitForRuntimeLevelCmdsAndClear();
+
 protected:
   EventImplPtr insertHelperBarrier();
 
@@ -933,6 +945,15 @@ protected:
   submit_direct(bool CallerNeedsEvent, sycl::span<const event> DepEvents,
                 SubmitCommandFuncType &SubmitCommandFunc, detail::CGType Type,
                 bool InsertBarrierForInOrderCommand);
+
+  /// Performs barrier submission to the queue.
+  ///
+  /// \param DepEvents is a vector of dependencies of the operation.
+  /// \param CodeLoc is the code location of the submit call
+  ///
+  /// \return a SYCL event representing submitted command group or nullptr.
+  EventImplPtr submit_barrier_direct_impl(sycl::span<const event> DepEvents,
+                                          const detail::code_location &CodeLoc);
 
   /// Helper function for submitting a memory operation with a handler.
   /// \param DepEvents is a vector of dependencies of the operation.
