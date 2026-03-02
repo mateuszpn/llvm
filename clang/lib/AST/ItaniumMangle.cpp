@@ -4198,9 +4198,11 @@ void CXXNameMangler::mangleRISCVFixedRVVVectorType(const VectorType *T) {
     TypeNameOS << "uint32";
     break;
   case BuiltinType::Long:
+  case BuiltinType::LongLong:
     TypeNameOS << "int64";
     break;
   case BuiltinType::ULong:
+  case BuiltinType::ULongLong:
     TypeNameOS << "uint64";
     break;
   case BuiltinType::Float16:
@@ -4957,11 +4959,18 @@ recurse:
     E = cast<ConstantExpr>(E)->getSubExpr();
     goto recurse;
 
+  case Expr::CXXReflectExprClass: {
+    // TODO(Reflection): implement this after introducing std::meta::info
+    assert(false && "unimplemented");
+    break;
+  }
+
   // FIXME: invent manglings for all these.
   case Expr::BlockExprClass:
   case Expr::ChooseExprClass:
   case Expr::CompoundLiteralExprClass:
   case Expr::ExtVectorElementExprClass:
+  case Expr::MatrixElementExprClass:
   case Expr::GenericSelectionExprClass:
   case Expr::ObjCEncodeExprClass:
   case Expr::ObjCIsaExprClass:
