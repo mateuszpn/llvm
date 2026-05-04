@@ -1,14 +1,14 @@
 //===----------- device.cpp - LLVM Offload Adapter  -----------------------===//
 //
-// Copyright (C) 2025-2026 Intel Corporation
 //
-// Part of the Unified-Runtime Project, under the Apache License v2.0 with LLVM
-// Exceptions. See LICENSE.TXT
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
 #include <OffloadAPI.h>
+#include <limits>
 #include <unified-runtime/ur_api.h>
 #include <ur/ur.hpp>
 
@@ -107,7 +107,9 @@ UR_APIEXPORT ur_result_t UR_APICALL urDeviceGetInfo(ur_device_handle_t hDevice,
     olInfo = OL_DEVICE_INFO_NATIVE_VECTOR_WIDTH_INT;
     break;
   case UR_DEVICE_INFO_PREFERRED_VECTOR_WIDTH_LONG:
+  case UR_DEVICE_INFO_PREFERRED_VECTOR_WIDTH_LONG_LONG:
   case UR_DEVICE_INFO_NATIVE_VECTOR_WIDTH_LONG:
+  case UR_DEVICE_INFO_NATIVE_VECTOR_WIDTH_LONG_LONG:
     olInfo = OL_DEVICE_INFO_NATIVE_VECTOR_WIDTH_LONG;
     break;
   case UR_DEVICE_INFO_PREFERRED_VECTOR_WIDTH_FLOAT:
@@ -206,6 +208,27 @@ UR_APIEXPORT ur_result_t UR_APICALL urDeviceGetInfo(ur_device_handle_t hDevice,
       urVec[0] = olVec.x;
       urVec[1] = olVec.y;
       urVec[2] = olVec.z;
+    }
+
+    return UR_RESULT_SUCCESS;
+  }
+  case UR_DEVICE_INFO_MAX_WORK_GROUPS: {
+    // OL dimensions are uint32_t while UR is size_t, so they need to be mapped.
+    if (pPropSizeRet) {
+      *pPropSizeRet = sizeof(size_t);
+    }
+
+    if (pPropValue) {
+      ol_dimensions_t olVec;
+      OL_RETURN_ON_ERR(olGetDeviceInfo(
+          hDevice->OffloadDevice, OL_DEVICE_INFO_MAX_WORK_SIZE_PER_DIMENSION,
+          sizeof(olVec), &olVec));
+
+      // Multiply the max group counts in each dimension to get the total max
+      // number of work groups. Prevent overflow.
+      *reinterpret_cast<size_t *>(pPropValue) = multiplyWithOverflowCheck(
+          static_cast<size_t>(olVec.x), static_cast<size_t>(olVec.y),
+          static_cast<size_t>(olVec.z));
     }
 
     return UR_RESULT_SUCCESS;

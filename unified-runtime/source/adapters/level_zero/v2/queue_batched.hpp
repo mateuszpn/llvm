@@ -1,9 +1,8 @@
 //===--------------- queue_batched.hpp - Level Zero Adapter ---------------===//
 //
-// Copyright (C) 2025-2026 Intel Corporation
 //
-// Part of the Unified-Runtime Project, under the Apache License v2.0 with LLVM
-// Exceptions. See LICENSE.TXT
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
@@ -198,8 +197,6 @@ private:
   ur_result_t queueFinishPoolsUnlocked();
 
   ur_result_t queueFinishUnlocked(locked<batch_manager> &batchLocked);
-
-  ur_result_t queueFlushUnlocked(locked<batch_manager> &batchLocked);
 
   ur_result_t markIssuedCommandInBatch(locked<batch_manager> &batchLocked);
 
@@ -481,6 +478,10 @@ public:
   }
 
   ur_result_t queueIsGraphCapteEnabledExp(bool * /* pResult */) override {
+    return UR_RESULT_ERROR_UNSUPPORTED_FEATURE;
+  }
+
+  ur_result_t queueGetGraphExp(ur_exp_graph_handle_t * /* phGraph */) override {
     return UR_RESULT_ERROR_UNSUPPORTED_FEATURE;
   }
 
